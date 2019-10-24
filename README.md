@@ -1,13 +1,13 @@
 # CarND-Path-Planning-Project
 Self-Driving Car Engineer Nanodegree Program
    
-### Simulator.
+<!-- ### Simulator.
 You can download the Term3 Simulator which contains the Path Planning Project from the [releases tab (https://github.com/udacity/self-driving-car-sim/releases/tag/T3_v1.2).  
 
 To run the simulator on Mac/Linux, first make the binary file executable with the following command:
 ```shell
 sudo chmod u+x {simulator_file_name}
-```
+``` -->
 
 ### Goals
 In this project your goal is to safely navigate around a virtual highway with other traffic that is driving +-10 MPH of the 50 MPH speed limit. You will be provided the car's localization and sensor fusion data, there is also a sparse map list of waypoints around the highway. The car should try to go as close as possible to the 50 MPH speed limit, which means passing slower traffic when possible, note that other cars will try to change lanes too. The car should avoid hitting other cars at all cost as well as driving inside of the marked road lanes at all times, unless going from one lane to another. The car should be able to make one complete loop around the 6946m highway. Since the car is trying to go 50 MPH, it should take a little over 5 minutes to complete 1 loop. Also the car should not experience total acceleration over 10 m/s^2 and jerk that is greater than 10 m/s^3.
@@ -198,7 +198,218 @@ The output of the prediction module would look like this:
 
 ```
 
-#### The map of the highway is in data/highway_map.txt
+The example above shows only vehicles but in reality we will make predictions for all moving objects in the environment, e.g. pedestrians
+
+In this project, we assume we have only 3 lanes and each lane is 4m wide. 
+
+The first task is to know if there is a car in front, at the right, or at the left of our car. We defined three booleans to keep track of that:
+
+```shell
+bool car_in_left = false;
+bool car_in_right = false;
+bool car_ahead = false;
+```
+The we find the actual lane the car is by using this:
+
+```shell
+//check where other cars are
+if(d > 0 && d < 4) {
+    check_car_lane_pos = 0; // d is between 1 and 3 so car is in first lane
+} else if(d > 4 && d < 8) {
+        check_car_lane_pos = 1; //d is between 5 and 7 so car is in the second lane
+} else if(d > 8 and d < 12) {
+    check_car_lane_pos = 2;   //d is between 9 and 11 so car is in the third/last lane
+} 
+```
+So we set our flags to true or false based on the location of the car:
+
+```shell
+if(check_car_lane_pos == lane) {
+    //the car is on the same lane and in front of the lego car
+    //car_ahead |= check_car_s > car_s && (check_car_s - car_s) < 30;	
+
+    if (check_car_s > car_s && (check_car_s - car_s) < 30)
+    {
+    car_ahead = true;
+    }							
+
+} else if((check_car_lane_pos - lane) == -1) {
+    //the car is on the left lane of the lego car
+    //car_left |= (car_s+30) > check_car_s  && (car_s-30) < check_car_s;
+
+    if ((car_s+30) > check_car_s  && (car_s-30) < check_car_s)
+    {
+        car_in_left = true;
+    }
+
+} else if((check_car_lane_pos - lane) == 1) {
+    //A vehicle is on the right lane and check that is in 30 meter range
+    //car_right |= (car_s+30) > check_car_s  && (car_s-30) < check_car_s;
+
+    if ((car_s+30) > check_car_s  && (car_s-30) < check_car_s)
+    {
+    car_in_right = true;
+    }
+
+}
+
+```
+
+### Behavior Planning
+This component determines the action our ego car should in time based on the location of other cars.
+Our ego can slow down if the car at its front is moving slow, can change left to left if the left lane is free, can change lane to right if right lane is free, or acclerate if there is enough space at the front and the max. speed is not reached.
+The logic for that is :
+```shell
+
+f(car_ahead) {
+    if(!car_in_left && lane > 0) {
+        lane--; //if there is no car in left lane amd the current lane is not left lane, change to left lane
+    } else if(!car_in_right && lane !=2) {
+        lane++; //if there is no car in right lane amd the current lane is not right lane, change to left lane
+    } else if(!car_in_left && lane !=2) {
+        lane++; //if there is no car in leftmost lane amd the current lane is not leftmost lane, change to right lane
+    }else {
+        ref_vel -= change_speed; // decrease speed if changing lane is not posibble
+    }
+    } 
+    else if(ref_vel < max_speed){
+        ref_vel += change_speed; //accelerate if no car in front
+    }
+
+```
+
+### Trajectory Generation
+This component dtermines the best trajectory to follow from a present location to a desired location.
+We first find the size of the previous points we have:
+```shell
+int prev_size = previous_path_x.size();
+```
+
+We then keep the reference x, y, and yaw points:
+```shell
+double ref_x = car_x;
+double ref_y = car_y;
+double ref_yaw = deg2rad(car_yaw);
+```
+
+If the previous points is almost empty, we use the current car's position to determine the previous points and add them to the list:
+
+```shell
+if (prev_size < 2) 
+    {
+    //Use two points that make the path tanget to the car
+    double prev_car_x = car_x - cos(car_yaw);
+    double prev_car_y = car_y - sin(car_yaw);
+
+    ptsx.push_back(prev_car_x);
+    ptsx.push_back(car_x);
+
+    ptsy.push_back(prev_car_y);
+    ptsy.push_back(car_y);
+
+    }
+```
+
+If we have enough previous points, we add two previous point to the list:
+
+```shell
+
+//Redefine reference state as previous path end point
+ref_x = previous_path_x[prev_size-1];
+ref_y = previous_path_y[prev_size-1];
+
+double ref_x_prev = previous_path_x[prev_size-2];
+double ref_y_prev = previous_path_y[prev_size-2];
+ref_yaw = atan2(ref_y-ref_y_prev,ref_x-ref_x_prev);
+
+//Use the two points that make the path tangent to the previous path'snd point
+ptsx.push_back(ref_x_prev);
+ptsx.push_back(ref_x);
+
+ptsy.push_back(ref_y_prev);
+ptsy.push_back(ref_y);
+```
+Now we need to add 3 future points to ptsx, psy vecotrs:
+
+```shell
+//In Frenet add evenly 30m spaced points ahead of the starting reference
+vector <double> next_wp0 = getXY(car_s+30,(2+4*lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+vector <double> next_wp1 = getXY(car_s+60,(2+4*lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+vector <double> next_wp2 = getXY(car_s+90,(2+4*lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+
+ptsx.push_back(next_wp0[0]);
+ptsx.push_back(next_wp1[0]);
+ptsx.push_back(next_wp2[0]);
+
+ptsy.push_back(next_wp0[1]);
+ptsy.push_back(next_wp1[1]);
+ptsy.push_back(next_wp2[1]);
+```
+
+For trajectory generation, we are using spline:
+```shell
+//create a spine
+tk::spline s;
+
+//set (x,y) points to the spine
+s.set_points(ptsx,ptsy);
+```
+
+Then we add all previous points to next_x_vals and next_y_vals:
+```shell
+
+//Define the actual (x,y) points we will use for the planner
+vector<double> next_x_vals;
+vector<double> next_y_vals;
+
+//Start with all the previous path points from the last time
+for (int i = 0; i < previous_path_x.size(); i++)
+{
+next_x_vals.push_back(previous_path_x[i]);
+next_y_vals.push_back(previous_path_y[i]);
+}
+```
+
+For the ego car to travel at the desired speed, we need to find the all spline points till the horizon(say 30m) value:
+```shell
+
+//Calculate how to break up spline points so that we travel at our desired reference velocity
+double target_x = 30.0;
+double target_y = s(target_x);
+double target_dist = sqrt((target_x)*(target_x)+(target_y)*(target_y));
+```
+
+Finaly can calculate the spline points from start to horizon y points:
+```shell
+//Fill up the rest of our path lanner after filling it with previous points, here we will always output 50 points
+for (int i = 0; i <= 50-previous_path_x.size(); i++)
+{
+double N = (target_dist/(.02*ref_vel/2.24));
+double x_point = x_add_on+(target_x)/N;
+double y_point = s(x_point);
+
+x_add_on = x_point;
+
+double x_ref = x_point;
+double y_ref = y_point;
+
+//rotate back to normal after rotating it eailer
+x_point = (x_ref*cos(ref_yaw)-y_ref*sin(ref_yaw));
+y_point = (x_ref*sin(ref_yaw)+y_ref*cos(ref_yaw));
+
+x_point+= ref_x;
+y_point+=ref_y;
+
+
+next_x_vals.push_back(x_point);
+next_y_vals.push_back(y_point);
+
+
+} 
+
+```
+
+<!-- #### The map of the highway is in data/highway_map.txt
 Each waypoint in the list contains  [x,y,s,dx,dy] values. x and y are the waypoint's map coordinate position, the s value is the distance along the road to get to that waypoint in meters, the dx and dy values define the unit normal vector pointing outward of the highway loop.
 
 The highway's waypoints loop around so the frenet s value, distance along the road, goes from 0 to 6945.554.
@@ -328,4 +539,4 @@ still be compilable with cmake and make./
 
 ## How to write a README
 A well written README file can enhance your project and portfolio.  Develop your abilities to create professional README files by completing [this free course](https://www.udacity.com/course/writing-readmes--ud777).
-
+ -->
