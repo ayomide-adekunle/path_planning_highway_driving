@@ -114,11 +114,28 @@ int main() {
 
           bool too_close = false;
 
+          int count_stay_in_lane = 0;
+          int keep_lane = lane;
+          int can_change_lane = 0;
+
           //find ref_v to use
           for( int i = 0; i < sensor_fusion.size(); i++)
           {
             //car is in my lane
             float d = sensor_fusion[i][6];
+
+            //count the numbers the car has been in a lane
+            if ( keep_lane == lane)
+            {
+              count_stay_in_lane++;
+            }
+
+            //you can only ahnge lane when you've been in a lane for some time
+            //this solve the problem of jumping from 0 to 1 and 2 lanes immediately
+            if (count_stay_in_lane > 10)
+            {
+              can_change_lane = 1;
+            }
 
             int check_car_lane_pos; //keep track of the lane our car is
 
@@ -197,12 +214,15 @@ int main() {
           }
 
           if(car_ahead) {
-            if(!car_in_left && lane > 0) {
+            if(!car_in_left && lane > 0 && can_change_lane == 1) {
               lane--; //if there is no car in left lane amd the current lane is not left lane, change to left lane
-            } else if(!car_in_right && lane !=2) {
+              can_change_lane = 0;
+            } else if(!car_in_right && lane !=2 && can_change_lane == 1) {
               lane++; //if there is no car in right lane amd the current lane is not right lane, change to left lane
-            } else if(!car_in_left && lane !=2) {
+              can_change_lane = 0;
+            } else if(!car_in_left && lane !=2 && can_change_lane == 1) {
               lane++; //if there is no car in leftmost lane amd the current lane is not leftmost lane, change to right lane
+              can_change_lane = 0;
             }else {
               ref_vel -= change_speed; // decrease speed if changing lane is not posibble
             }
